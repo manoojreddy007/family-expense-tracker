@@ -1,0 +1,6 @@
+# Requirements for the Family Expense Tracker
+Flask
+Flask-SQLAlchemy
+Flask-Login
+Werkzeug
+gunicorn
