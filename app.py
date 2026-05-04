@@ -21,6 +21,7 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "family_secret")
 CATEGORIES = ['Food', 'Groceries', 'Rent', 'Fuel', 'Shopping', 'Travel', 'Medical', 'Salary', 'Misc']
 TRANSACTION_TYPES = ['Expense', 'Income']
 PEOPLE = ['Manoj', 'Lalitha']
+NOTES_MAX_LENGTH = 200
 CHART_COLORS = [
     "#007bff",
     "#dc3545",
@@ -62,7 +63,7 @@ class Transaction(db.Model):
 
     type = db.Column(db.String(50), nullable=False)
 
-    notes = db.Column(db.String(300))
+    notes = db.Column(db.String(NOTES_MAX_LENGTH))
 
     date = db.Column(db.String(50))
 
@@ -121,6 +122,8 @@ def parse_transaction_form(form):
         raise ValueError("Please choose Income or Expense.")
     if added_by not in PEOPLE:
         raise ValueError("Please choose a valid person.")
+    if len(notes) > NOTES_MAX_LENGTH:
+        raise ValueError(f"Notes must be {NOTES_MAX_LENGTH} characters or fewer.")
 
     try:
         datetime.strptime(date, "%Y-%m-%d")
@@ -197,8 +200,41 @@ def truncate(value, length):
     return text if len(text) <= length else f"{text[:length - 3]}..."
 
 
-def text_command(x, y, text, size=10):
-    return f"0 0 0 rg BT /F1 {size} Tf {x} {y} Td ({pdf_escape(text)}) Tj ET"
+def wrap_text(value, length):
+    text = " ".join(str(value or "").split())
+    if not text:
+        return [""]
+
+    lines = []
+    current = ""
+    for word in text.split(" "):
+        if len(word) > length:
+            if current:
+                lines.append(current)
+                current = ""
+            while len(word) > length:
+                lines.append(word[:length])
+                word = word[length:]
+        if not word:
+            continue
+        if not current:
+            current = word
+        elif len(current) + 1 + len(word) <= length:
+            current = f"{current} {word}"
+        else:
+            lines.append(current)
+            current = word
+
+    if current:
+        lines.append(current)
+    return lines
+
+
+def text_command(x, y, text, size=10, color="#000000"):
+    return (
+        f"{color_command(color)} BT /F1 {size} Tf "
+        f"{x:.2f} {y:.2f} Td ({pdf_escape(text)}) Tj ET"
+    )
 
 
 def pdf_rgb(hex_color):
@@ -211,6 +247,11 @@ def color_command(hex_color):
     return f"{red:.3f} {green:.3f} {blue:.3f} rg"
 
 
+def stroke_color_command(hex_color):
+    red, green, blue = pdf_rgb(hex_color)
+    return f"{red:.3f} {green:.3f} {blue:.3f} RG"
+
+
 def rect_command(x, y, width, height, color):
     return (
         "q\n"
@@ -218,6 +259,20 @@ def rect_command(x, y, width, height, color):
         f"{x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n"
         "Q"
     )
+
+
+def box_command(x, y, width, height, fill="#ffffff", stroke="#d9dee5", line_width=0.6):
+    draw_operator = "B" if fill else "S"
+    commands = [
+        "q",
+        f"{line_width:.2f} w",
+        stroke_color_command(stroke),
+    ]
+    if fill:
+        commands.append(color_command(fill))
+    commands.append(f"{x:.2f} {y:.2f} {width:.2f} {height:.2f} re {draw_operator}")
+    commands.append("Q")
+    return "\n".join(commands)
 
 
 def pie_slice_command(cx, cy, radius, start_percent, end_percent, color):
@@ -239,11 +294,25 @@ def pie_slice_command(cx, cy, radius, start_percent, end_percent, color):
     return "q\n" + color_command(color) + "\n" + "\n".join(path) + "\nQ"
 
 
-def chart_commands(segments, cx=120, cy=610, radius=62):
+def summary_box_commands(label, value, x, y, width, height, accent):
     commands = [
-        text_command(40, 700, "Category-wise Expenses", 12),
+        box_command(x, y, width, height, fill="#f8f9fa", stroke="#d9dee5"),
+        rect_command(x, y, 4, height, accent),
+        text_command(x + 12, y + height - 14, label, 8, "#5f6872"),
+        text_command(x + 12, y + 10, value, 12, "#000000"),
+    ]
+    return commands
+
+
+def chart_commands(segments, x=40, y=300, width=762, height=170):
+    commands = [
+        box_command(x, y, width, height, fill="#ffffff", stroke="#d9dee5"),
+        text_command(x + 14, y + height - 24, "Category-wise Expenses", 12),
     ]
 
+    cx = x + 90
+    cy = y + 76
+    radius = 52
     for segment in segments:
         commands.append(
             pie_slice_command(
@@ -256,14 +325,14 @@ def chart_commands(segments, cx=120, cy=610, radius=62):
             )
         )
 
-    legend_x = 220
-    legend_y = 662
+    legend_x = x + 180
+    legend_y = y + height - 52
     for index, segment in enumerate(segments):
-        y = legend_y - (index * 18)
-        commands.append(rect_command(legend_x, y - 3, 10, 10, segment["color"]))
+        row_y = legend_y - (index * 16)
+        commands.append(rect_command(legend_x, row_y - 3, 10, 10, segment["color"]))
         commands.append(text_command(
             legend_x + 16,
-            y,
+            row_y,
             f"{segment['label']}: Rs. {segment['amount']:.2f} ({segment['percent']:.1f}%)",
             8,
         ))
@@ -271,21 +340,116 @@ def chart_commands(segments, cx=120, cy=610, radius=62):
     return commands
 
 
-def build_transactions_pdf(transactions, month, total_income, total_expense, savings):
-    page_width = 595
-    page_height = 842
-    left = 40
-    row_height = 18
-    rows_per_page = 24
-
-    header = [
-        ("Name", 40, 22),
-        ("Amount", 180, 16),
-        ("Category", 255, 14),
-        ("Type", 335, 10),
-        ("Date", 395, 10),
-        ("Added By", 470, 12),
+def table_columns():
+    return [
+        {"label": "Name", "width": 120, "chars": 25},
+        {"label": "Amount", "width": 65, "chars": 13},
+        {"label": "Category", "width": 80, "chars": 15},
+        {"label": "Type", "width": 60, "chars": 10},
+        {"label": "Date", "width": 75, "chars": 10},
+        {"label": "Added By", "width": 70, "chars": 12},
+        {"label": "Notes", "width": 292, "chars": 66},
     ]
+
+
+def notes_column(columns):
+    return next(column for column in columns if column["label"] == "Notes")
+
+
+def row_height_for_transaction(transaction, columns, min_height=18, line_height=8, padding=8):
+    lines = wrap_text(transaction.notes or "", notes_column(columns)["chars"])
+    return max(min_height, (len(lines) * line_height) + padding)
+
+
+def table_available_height(table_top, bottom_margin=45, header_height=20):
+    return max(table_top - bottom_margin - header_height, 1)
+
+
+def table_row_batches(transactions, first_table_top, later_table_top, columns):
+    if not transactions:
+        return [[]]
+
+    batches = []
+    current_batch = []
+    current_height = 0
+    page_index = 0
+    page_height_limit = table_available_height(first_table_top)
+
+    for transaction in transactions:
+        row_height = row_height_for_transaction(transaction, columns)
+        if current_batch and current_height + row_height > page_height_limit:
+            batches.append(current_batch)
+            current_batch = []
+            current_height = 0
+            page_index += 1
+            page_height_limit = table_available_height(later_table_top)
+
+        current_batch.append(transaction)
+        current_height += row_height
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
+def table_commands(rows, table_top, columns, left=40, min_row_height=18, header_height=20, line_height=8):
+    commands = []
+    x = left
+    header_y = table_top - header_height
+
+    for column in columns:
+        commands.append(box_command(x, header_y, column["width"], header_height, fill="#343a40", stroke="#343a40"))
+        commands.append(text_command(x + 4, header_y + 7, column["label"], 8, "#ffffff"))
+        x += column["width"]
+
+    if not rows:
+        width = sum(column["width"] for column in columns)
+        row_y = header_y - min_row_height
+        commands.append(box_command(left, row_y, width, min_row_height, fill="#ffffff", stroke="#d9dee5"))
+        commands.append(text_command(left + 4, row_y + 6, "No transactions found.", 8))
+        return commands
+
+    current_y = header_y
+    for row_index, transaction in enumerate(rows):
+        values = [
+            transaction.name or "",
+            f"Rs. {transaction.amount:.2f}",
+            transaction.category,
+            transaction.type,
+            transaction.date,
+            transaction.added_by,
+            transaction.notes or "",
+        ]
+        fill = "#ffffff" if row_index % 2 == 0 else "#f8f9fa"
+        row_height = row_height_for_transaction(transaction, columns, min_height=min_row_height, line_height=line_height)
+        row_y = current_y - row_height
+        x = left
+
+        for value, column in zip(values, columns):
+            commands.append(box_command(x, row_y, column["width"], row_height, fill=fill, stroke="#d9dee5"))
+            if column["label"] == "Notes":
+                note_lines = wrap_text(value, column["chars"])
+                line_y = row_y + row_height - 12
+                for line in note_lines:
+                    commands.append(text_command(x + 4, line_y, line, 7))
+                    line_y -= line_height
+            else:
+                commands.append(text_command(x + 4, row_y + row_height - 12, truncate(value, column["chars"]), 7))
+            x += column["width"]
+
+        current_y = row_y
+
+    return commands
+
+
+def build_transactions_pdf(transactions, month, total_income, total_expense, savings):
+    page_width = 842
+    page_height = 595
+    left = 40
+    usable_width = page_width - (left * 2)
+    first_table_top = 280
+    later_table_top = 470
 
     category_totals = {}
     for transaction in transactions:
@@ -293,46 +457,51 @@ def build_transactions_pdf(transactions, month, total_income, total_expense, sav
             category_totals[transaction.category] = category_totals.get(transaction.category, 0) + transaction.amount
     chart_segments, _ = build_category_chart(category_totals)
 
+    if not chart_segments:
+        first_table_top = later_table_top
+
+    columns = table_columns()
+    page_rows = table_row_batches(transactions, first_table_top, later_table_top, columns)
     pages = []
-    page_rows = [transactions[i:i + rows_per_page] for i in range(0, len(transactions), rows_per_page)] or [[]]
 
     for page_number, rows in enumerate(page_rows, start=1):
-        y = page_height - 45
         commands = [
-            text_command(left, y, "LA-MA NEST Expense Report", 16),
-            text_command(left, y - 24, f"Month: {month_label(month)}", 11),
-            text_command(left, y - 42, f"Total Income: Rs. {total_income:.2f}", 10),
-            text_command(left, y - 58, f"Total Expense: Rs. {total_expense:.2f}", 10),
-            text_command(left, y - 74, f"Savings: Rs. {savings:.2f}", 10),
-            text_command(500, 30, f"Page {page_number}", 9),
+            text_command(left, page_height - 40, "LA-MA NEST Expense Report", 16),
+            text_command(left, page_height - 62, f"Month: {month_label(month)}", 10, "#5f6872"),
+            text_command(page_width - 84, 28, f"Page {page_number}", 8, "#5f6872"),
         ]
+
+        summary_y = page_height - 106
+        summary_gap = 10
+        summary_width = (usable_width - (summary_gap * 2)) / 3
+        commands.extend(summary_box_commands("Total Income", f"Rs. {total_income:.2f}", left, summary_y, summary_width, 40, "#007bff"))
+        commands.extend(summary_box_commands(
+            "Total Expense",
+            f"Rs. {total_expense:.2f}",
+            left + summary_width + summary_gap,
+            summary_y,
+            summary_width,
+            40,
+            "#dc3545",
+        ))
+        commands.extend(summary_box_commands(
+            "Savings",
+            f"Rs. {savings:.2f}",
+            left + ((summary_width + summary_gap) * 2),
+            summary_y,
+            summary_width,
+            40,
+            "#28a745",
+        ))
 
         if page_number == 1 and chart_segments:
             commands.extend(chart_commands(chart_segments))
-            table_y = 510
+            table_top = first_table_top
         else:
-            table_y = y - 108
+            table_top = later_table_top
 
-        for label, x, _ in header:
-            commands.append(text_command(x, table_y, label, 9))
-
-        table_y -= row_height
-        if rows:
-            for transaction in rows:
-                values = [
-                    truncate(transaction.name, 22),
-                    f"Rs. {transaction.amount:.2f}",
-                    truncate(transaction.category, 14),
-                    transaction.type,
-                    transaction.date,
-                    truncate(transaction.added_by, 12),
-                ]
-                for value, (_, x, _) in zip(values, header):
-                    commands.append(text_command(x, table_y, value, 8))
-                table_y -= row_height
-        else:
-            commands.append(text_command(left, table_y, "No transactions found.", 10))
-
+        commands.append(text_command(left, table_top + 14, "Transactions", 11))
+        commands.extend(table_commands(rows, table_top, columns, left=left))
         pages.append("\n".join(commands))
 
     objects = []

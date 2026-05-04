@@ -15,6 +15,13 @@ body {
     max-width: 300px;
 }
 
+.notes-cell {
+    min-width: 180px;
+    max-width: 280px;
+    white-space: normal;
+    word-break: break-word;
+}
+
 .expense-chart {
     display: flex;
     align-items: center;
