@@ -1,6 +1,4 @@
-# Requirements for the Family Expense Tracker
+# Requirements for the La-Ma Nest Expense Tracker
 Flask
 Flask-SQLAlchemy
-Flask-Login
-Werkzeug
 gunicorn

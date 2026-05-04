@@ -3,5 +3,85 @@ body {
 }
 
 .card {
-    border-radius: 15px;
+    border-radius: 8px;
+}
+
+.navbar-brand {
+    white-space: normal;
+}
+
+.month-filter {
+    width: 100%;
+    max-width: 300px;
+}
+
+.expense-chart {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2rem;
+    flex-wrap: wrap;
+}
+
+.css-pie {
+    width: min(320px, 78vw);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+    flex: 0 0 auto;
+}
+
+.chart-legend {
+    width: min(100%, 420px);
+}
+
+.legend-row {
+    display: grid;
+    grid-template-columns: 18px minmax(90px, 1fr) auto auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid #e3e6ea;
+}
+
+.legend-color {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+}
+
+.legend-label {
+    font-weight: 600;
+}
+
+.legend-value,
+.legend-percent {
+    white-space: nowrap;
+}
+
+@media (max-width: 576px) {
+    .card h2 {
+        font-size: 1.25rem;
+    }
+
+    .card h4 {
+        font-size: 1rem;
+    }
+
+    .navbar-brand {
+        font-size: 1rem;
+    }
+
+    .expense-chart {
+        gap: 1.25rem;
+    }
+
+    .legend-row {
+        grid-template-columns: 18px minmax(80px, 1fr) auto;
+    }
+
+    .legend-percent {
+        grid-column: 2 / -1;
+        color: #6c757d;
+    }
 }

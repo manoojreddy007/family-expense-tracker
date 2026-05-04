@@ -4,130 +4,156 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Family Expense Tracker</title>
-
-    <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-
-    <!-- Custom CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <style>
-        /* Mobile optimization tweaks */
-        .card h2, .card h4 { font-size: 1.2rem; }
-        @media (max-width: 576px) {
-            .card h2 { font-size: 1rem; }
-            .card h4 { font-size: 0.9rem; }
-            .navbar-brand { font-size: 1rem; }
-        }
-    </style>
 </head>
 <body>
-
-    <!-- Navbar -->
     <nav class="navbar navbar-dark bg-dark">
-        <div class="container-fluid">
-            <span class="navbar-brand mb-0 h1">
-                💰 Family Expense Tracker
-            </span>
-            <span class="text-white me-3">
-                {% if current_user.is_authenticated %}
-                    👤 {{ current_user.name }}
-                {% endif %}
-            </span>
-            <a href="/logout" class="btn btn-danger">
-                Logout
-            </a>
+        <div class="container-fluid d-flex justify-content-between align-items-center">
+            <span class="navbar-brand mb-0 h1">LA-MA NEST Expense Tracker</span>
+            <a href="/logout" class="btn btn-danger ms-auto">Logout</a>
         </div>
     </nav>
 
-    <!-- Main Container -->
-    <div class="container mt-5">
+    <main class="container my-5">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <div class="mb-3">
+              {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                  {{ message }}
+                  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
 
-        <div class="card shadow p-4">
-
-            <h2 class="mb-4 text-center">
-                Welcome Manoj & Family 👋
-            </h2>
+        <section class="card shadow p-4 mb-5">
+            <h2 class="mb-4 text-center">Welcome Manoj & Lalitha</h2>
 
             <div class="row text-center">
-
                 <div class="col-md-4 mb-3">
                     <div class="card bg-primary text-white p-3">
                         <h4>Total Income</h4>
-                        <h2>₹ {{ total_income }}</h2>
+                        <h2>Rs. {{ "%.2f"|format(total_income) }}</h2>
                     </div>
                 </div>
-
                 <div class="col-md-4 mb-3">
                     <div class="card bg-danger text-white p-3">
                         <h4>Total Expense</h4>
-                        <h2>₹ {{ total_expense }}</h2>
+                        <h2>Rs. {{ "%.2f"|format(total_expense) }}</h2>
                     </div>
                 </div>
-
                 <div class="col-md-4 mb-3">
                     <div class="card bg-success text-white p-3">
                         <h4>Savings</h4>
-                        <h2>₹ {{ savings }}</h2>
+                        <h2>Rs. {{ "%.2f"|format(savings) }}</h2>
                     </div>
                 </div>
-
             </div>
 
             <div class="text-center mt-4">
-                <a href="/add" class="btn btn-primary">
-                    Add Expense
-                </a>
+                <a href="/add" class="btn btn-primary">Add Transaction</a>
+            </div>
+        </section>
+
+        <section class="mb-5">
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-3">
+                <h3 class="mb-0">Recent Transactions</h3>
+                <div class="d-flex gap-2">
+                    <form method="get" class="month-filter">
+                        <select name="month" class="form-select" onchange="this.form.submit()">
+                            <option value="">All Months</option>
+                            {% for value, label in month_options %}
+                                <option value="{{ value }}" {% if selected_month == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
+                    <a href="{{ url_for('download_report', month=selected_month) }}" class="btn btn-secondary" role="button">
+                        Download PDF
+                    </a>
+                </div>
             </div>
 
-        </div>
+            <nav aria-label="Transaction pagination" class="mt-3">
+  <ul class="pagination justify-content-end">
+    {% if page > 1 %}
+      <li class="page-item">
+        <a class="page-link" href="{{ url_for('home', month=selected_month, page=page-1) }}">Previous</a>
+      </li>
+    {% endif %} {% if has_next %}
+      <li class="page-item">
+        <a class="page-link" href="{{ url_for('home', month=selected_month, page=page+1) }}">Next</a>
+      </li>
+    {% endif %}
+  </ul>
+</nav>
 
-    </div>
+            <div class="table-responsive" id="reportTable">
+                <table class="table table-bordered table-striped align-middle" id="transactionsTable">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Name</th>
+                            <th>Amount</th>
+                            <th>Category</th>
+                            <th>Type</th>
+                            <th>Date</th>
+                            <th>Added By</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for transaction in transactions %}
+                        <tr>
+                            <td>{{ transaction.name or '' }}</td>
+                            <td>Rs. {{ "%.2f"|format(transaction.amount) }}</td>
+                            <td>{{ transaction.category }}</td>
+                            <td>{{ transaction.type }}</td>
+                            <td>{{ transaction.date }}</td>
+                            <td>{{ transaction.added_by }}</td>
+                            <td>
+                                <div class="d-flex gap-2">
+                                    <a href="/edit/{{ transaction.id }}" class="btn btn-warning btn-sm">Edit</a>
+                                    <form method="POST" action="/delete/{{ transaction.id }}" onsubmit="return confirm('Delete this transaction?');">
+                                        <button class="btn btn-danger btn-sm" type="submit">Delete</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted py-4">No transactions found.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
 
-    <hr class="my-5">
+        <section>
+            <h3 class="mb-4">Category-wise Expenses</h3>
+            {% if chart_segments %}
+            <div class="expense-chart">
+                <div class="css-pie" role="img" aria-label="Expense category pie chart" style="background: {{ chart_style }};"></div>
+                <div class="chart-legend">
+                    {% for segment in chart_segments %}
+                    <div class="legend-row">
+                        <span class="legend-color" style="background-color: {{ segment.color }};"></span>
+                        <span class="legend-label">{{ segment.label }}</span>
+                        <span class="legend-value">Rs. {{ "%.2f"|format(segment.amount) }}</span>
+                        <span class="legend-percent">{{ "%.1f"|format(segment.percent) }}%</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% else %}
+            <p class="text-muted">No expense data available for this selection.</p>
+            {% endif %}
+        </section>
+    </main>
 
-    <h3 class="mb-4">Recent Transactions</h3>
-
-    <table class="table table-bordered table-striped">
-
-        <thead class="table-dark">
-            <tr>
-                <th>Date</th>
-                <th>Category</th>
-                <th>Type</th>
-                <th>Amount</th>
-                <th>Added By</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-
-        <tbody>
-
-            {% for transaction in transactions %}
-
-            <tr>
-                <td>{{ transaction.date }}</td>
-                <td>{{ transaction.category }}</td>
-                <td>{{ transaction.type }}</td>
-                <td>₹ {{ transaction.amount }}</td>
-                <td>{{ transaction.added_by }}</td>
-                <td>
-                <a href="/delete/{{ transaction.id }}"
-                class="btn btn-danger btn-sm">
-                    Delete
-                </a>
-                </td>
-            </tr>
-
-            {% endfor %}
-
-        </tbody>
-
-    </table>
-
-    <hr class="my-5">
-
-    <h3 class="mb-4">Monthly Analytics (Coming Soon)</h3>
-    <div class="alert alert-info">Charts and analytics will be displayed here.</div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 </body>
 </html>

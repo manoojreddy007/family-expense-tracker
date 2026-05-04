@@ -8,17 +8,12 @@
 <div class="container mt-5">
     <div class="card p-4 shadow">
         <h2 class="text-center mb-4">
-            Login
+            Enter Family Password
         </h2>
         <form method="POST">
             {% if error %}
             <div class="alert alert-danger text-center">{{ error }}</div>
             {% endif %}
-            <input type="email"
-                   name="email"
-                   placeholder="Email"
-                   class="form-control mb-3"
-                   required>
             <input type="password"
                    name="password"
                    placeholder="Password"
@@ -28,11 +23,6 @@
                 Login
             </button>
         </form>
-        <div class="text-center mt-3">
-            <a href="/register">
-                Create Account
-            </a>
-        </div>
     </div>
 </div>
 </body>
