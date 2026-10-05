@@ -3,7 +3,7 @@ import math
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, render_template, request, redirect, session, url_for, flash, Response
+from flask import Flask, render_template, request, redirect, session, url_for, flash, Response, jsonify
 from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
@@ -14,13 +14,14 @@ database_url = os.environ.get(
     "sqlite:///expense_tracker.db"
 )
 
-# Fix postgres URL issue
+# Render/Neon URLs may specify psycopg 3, while this app installs psycopg2-binary.
+# Pin PostgreSQL URLs to the installed driver so SQLAlchemy doesn't import missing `psycopg`.
 if database_url.startswith("postgres://"):
-    database_url = database_url.replace(
-        "postgres://",
-        "postgresql://",
-        1
-    )
+    database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)
+elif database_url.startswith("postgresql+psycopg://"):
+    database_url = database_url.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
+elif database_url.startswith("postgresql://"):
+    database_url = database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -110,6 +111,97 @@ def login_required(f):
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated_function
+
+
+def api_login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get("authenticated"):
+            return jsonify({"error": "Authentication required."}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def transaction_json(transaction):
+    return {
+        "id": transaction.id,
+        "name": transaction.name or "",
+        "amount": transaction.amount,
+        "category": transaction.category,
+        "type": transaction.type,
+        "notes": transaction.notes or "",
+        "date": transaction.date or "",
+        "added_by": transaction.added_by or "",
+    }
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    body = request.get_json(silent=True) or {}
+    if body.get("password") != APP_PASSWORD:
+        return jsonify({"error": "Invalid password."}), 401
+    session["authenticated"] = True
+    return jsonify({"ok": True})
+
+
+@app.route("/api/logout", methods=["POST"])
+@api_login_required
+def api_logout():
+    session.pop("authenticated", None)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/dashboard", methods=["GET"])
+@api_login_required
+def api_dashboard():
+    month = request.args.get("month", "").strip()
+    query = Transaction.query
+    if month:
+        query = query.filter(Transaction.date.startswith(month))
+    rows = query.order_by(Transaction.date.desc(), Transaction.id.desc()).limit(200).all()
+    all_rows = Transaction.query.all()
+    months = sorted({row.date[:7] for row in all_rows if row.date}, reverse=True)
+    income = sum(row.amount for row in all_rows if row.type == "Income" and (not month or (row.date or "").startswith(month)))
+    expenses = sum(row.amount for row in all_rows if row.type == "Expense" and (not month or (row.date or "").startswith(month)))
+    return jsonify({
+        "rows": [transaction_json(row) for row in rows],
+        "income": income,
+        "expense": expenses,
+        "months": months,
+    })
+
+
+@app.route("/api/transactions", methods=["POST"])
+@api_login_required
+def api_create_transaction():
+    try:
+        values = parse_transaction_form(request.get_json(force=True))
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc) or "Invalid transaction."}), 400
+    transaction = Transaction(**values)
+    db.session.add(transaction)
+    db.session.commit()
+    return jsonify(transaction_json(transaction)), 201
+
+
+@app.route("/api/transactions/<int:transaction_id>", methods=["PUT", "DELETE"])
+@api_login_required
+def api_transaction(transaction_id):
+    transaction = db.session.get(Transaction, transaction_id)
+    if transaction is None:
+        return jsonify({"error": "Transaction not found."}), 404
+    if request.method == "DELETE":
+        db.session.delete(transaction)
+        db.session.commit()
+        return jsonify({"ok": True})
+    try:
+        values = parse_transaction_form(request.get_json(force=True))
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc) or "Invalid transaction."}), 400
+    for field, value in values.items():
+        setattr(transaction, field, value)
+    db.session.commit()
+    return jsonify(transaction_json(transaction))
 
 
 def parse_transaction_form(form):
