@@ -1,4 +1,4 @@
-#Mon Oct 05 06:29:31 IST 2026
+#Tue Oct 06 06:58:43 IST 2026
 base.0=C\:\\Users\\Manoj Reddy\\Downloads\\LA-MA_Expense_Tracker\\android-app\\app\\build\\intermediates\\dex\\debug\\mergeExtDexDebug\\classes.dex
 base.1=C\:\\Users\\Manoj Reddy\\Downloads\\LA-MA_Expense_Tracker\\android-app\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\0\\classes.dex
 base.2=C\:\\Users\\Manoj Reddy\\Downloads\\LA-MA_Expense_Tracker\\android-app\\app\\build\\intermediates\\dex\\debug\\mergeProjectDexDebug\\10\\classes.dex

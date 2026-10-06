@@ -10,6 +10,10 @@ Open this directory in Android Studio, run the app, and enter the deployed Flask
 
 The Android client uses the authenticated `/api` routes in the Flask app for login, dashboard data, and transaction create/update/delete. Its saved app password is encrypted in Android Keystore-backed private storage. No PostgreSQL driver or database credentials are included in the APK.
 
+After a successful online load, the complete transaction history is cached in app-private storage for quick offline viewing. Adds, edits, and deletes made offline are queued on the phone and retried when the app reconnects or refreshes. Pending changes stay on the phone until the server accepts them.
+
+The Android dashboard can save a selected-month or all-history PDF through the system file picker, or share it with another app. The LA-MA artwork is used for the launcher icon and in-app branding.
+
 ## Build an APK
 
 Install Android Studio with Android SDK 35 and JDK 17, open this directory, let Gradle sync, then use **Build > Build APK(s)**. The debug APK is suitable for private testing. For sharing, create a signed release APK and keep its signing key backed up. Updates must use the same signing key.

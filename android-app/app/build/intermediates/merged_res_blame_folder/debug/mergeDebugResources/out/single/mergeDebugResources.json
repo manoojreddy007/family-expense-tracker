@@ -1,0 +1,14 @@
+[
+    {
+        "merged": "com.lama.expensetracker.app-debug-46:/mipmap-xxxhdpi_ic_launcher_round.png.flat",
+        "source": "com.lama.expensetracker.app-main-48:/mipmap-xxxhdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.lama.expensetracker.app-debug-46:/xml_file_paths.xml.flat",
+        "source": "com.lama.expensetracker.app-main-48:/xml/file_paths.xml"
+    },
+    {
+        "merged": "com.lama.expensetracker.app-debug-46:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "com.lama.expensetracker.app-main-48:/mipmap-xxxhdpi/ic_launcher.png"
+    }
+]

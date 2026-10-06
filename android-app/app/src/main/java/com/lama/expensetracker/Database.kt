@@ -73,8 +73,17 @@ class SecureConfigStore(context: Context) {
     fun clear() { prefs.edit().clear().apply() }
 }
 
-class ExpenseRepository(private val config: BackendConfig) {
+class ExpenseRepository(context: Context, private val config: BackendConfig) {
     @Volatile private var cookie: String? = null
+    private val cache = context.applicationContext.getSharedPreferences(
+        "expense_cache_${config.baseUrl.hashCode()}", Context.MODE_PRIVATE
+    )
+    @Volatile var statusMessage: String = ""
+        private set
+
+    fun cachedDashboard(month: String): DashboardData? = cache.getString("snapshot", null)
+        ?.let { runCatching { JSONObject(it).getJSONArray("rows").toExpenses() }.getOrNull() }
+        ?.let { dashboardForMonth(it, month) }
 
     private fun request(path: String, method: String = "GET", body: JSONObject? = null, authenticated: Boolean = true): JSONObject {
         if (authenticated && cookie == null) login()
@@ -116,21 +125,96 @@ class ExpenseRepository(private val config: BackendConfig) {
     suspend fun ping() = withContext(Dispatchers.IO) { login() }
 
     suspend fun dashboard(month: String): DashboardData = withContext(Dispatchers.IO) {
-        val query = if (month.isBlank()) "" else "?month=${java.net.URLEncoder.encode(month, "UTF-8")}"
-        val json = request("/api/dashboard$query")
-        val rows = json.getJSONArray("rows").toExpenses()
-        val monthsJson = json.getJSONArray("months")
-        DashboardData(rows, json.optDouble("income"), json.optDouble("expense"),
-            (0 until monthsJson.length()).map { monthsJson.getString(it) })
+        val cached = cachedDashboard(month)
+        try {
+            syncPending()
+            if (pendingOperations().length() > 0) {
+                statusMessage = "Changes are saved on this phone and waiting to sync."
+                return@withContext cached ?: DashboardData(emptyList(), 0.0, 0.0, emptyList())
+            }
+            // Fetch the complete history once so every month remains available offline.
+            val json = request("/api/dashboard")
+            val rows = json.getJSONArray("rows").toExpenses()
+            cache.edit().putString("snapshot", JSONObject().put("rows", rows.toJsonArray()).toString()).apply()
+            statusMessage = ""
+            dashboardForMonth(rows, month)
+        } catch (e: Exception) {
+            if (cached != null) {
+                statusMessage = "Offline — showing saved records. Pending changes will sync when the app reconnects."
+                cached
+            } else throw e
+        }
     }
 
     suspend fun save(expense: Expense) = withContext(Dispatchers.IO) {
-        val body = expense.toJson()
-        if (expense.id == 0) request("/api/transactions", "POST", body)
-        else request("/api/transactions/${expense.id}", "PUT", body)
+        val rows = cachedRows().toMutableList()
+        val isNew = expense.id == 0
+        val id = if (isNew) (rows.filter { it.id < 0 }.minOfOrNull { it.id } ?: 0) - 1 else expense.id
+        val local = expense.copy(id = id)
+        if (isNew) rows.add(0, local) else {
+            val index = rows.indexOfFirst { it.id == id }
+            if (index >= 0) rows[index] = local else rows.add(0, local)
+        }
+        saveRows(rows)
+        enqueue(JSONObject().put("action", if (isNew) "create" else "update")
+            .put("id", id).put("body", local.toJson()))
+        runCatching { syncPending() }
+        statusMessage = if (pendingOperations().length() > 0) "Saved on this phone; waiting to sync." else ""
     }
 
-    suspend fun delete(id: Int) = withContext(Dispatchers.IO) { request("/api/transactions/$id", "DELETE") }
+    suspend fun delete(id: Int) = withContext(Dispatchers.IO) {
+        saveRows(cachedRows().filterNot { it.id == id })
+        enqueue(JSONObject().put("action", "delete").put("id", id))
+        runCatching { syncPending() }
+        statusMessage = if (pendingOperations().length() > 0) "Deleted on this phone; waiting to sync." else ""
+    }
+
+    private fun cachedRows(): List<Expense> = cache.getString("snapshot", null)
+        ?.let { runCatching { JSONObject(it).getJSONArray("rows").toExpenses() }.getOrNull() }
+        ?: emptyList()
+
+    private fun saveRows(rows: List<Expense>) {
+        cache.edit().putString("snapshot", JSONObject().put("rows", rows.toJsonArray()).toString()).apply()
+    }
+
+    private fun pendingOperations(): JSONArray = cache.getString("pending", null)
+        ?.let { runCatching { JSONArray(it) }.getOrNull() } ?: JSONArray()
+
+    private fun savePending(operations: JSONArray) {
+        cache.edit().putString("pending", operations.toString()).apply()
+    }
+
+    @Synchronized private fun enqueue(operation: JSONObject) {
+        val operations = pendingOperations()
+        operations.put(operation)
+        savePending(operations)
+    }
+
+    @Synchronized private fun syncPending() {
+        var operations = pendingOperations()
+        while (operations.length() > 0) {
+            val operation = operations.getJSONObject(0)
+            val id = operation.getInt("id")
+            when (operation.getString("action")) {
+                "create" -> {
+                    val created = request("/api/transactions", "POST", operation.getJSONObject("body"))
+                    val newId = created.getInt("id")
+                    val rows = cachedRows().map { if (it.id == id) it.copy(id = newId) else it }
+                    saveRows(rows)
+                    for (i in 1 until operations.length()) {
+                        val later = operations.getJSONObject(i)
+                        if (later.optInt("id") == id) later.put("id", newId)
+                    }
+                }
+                "update" -> request("/api/transactions/$id", "PUT", operation.getJSONObject("body"))
+                "delete" -> request("/api/transactions/$id", "DELETE")
+            }
+            val remaining = JSONArray()
+            for (i in 1 until operations.length()) remaining.put(operations.get(i))
+            operations = remaining
+            savePending(operations)
+        }
+    }
 
     private fun Expense.toJson() = JSONObject().put("name", name).put("amount", amount)
         .put("category", category).put("type", type).put("notes", notes)
@@ -141,6 +225,16 @@ class ExpenseRepository(private val config: BackendConfig) {
         Expense(row.getInt("id"), row.optString("name"), row.getDouble("amount"),
             row.optString("category"), row.optString("type"), row.optString("notes"),
             row.optString("date"), row.optString("added_by"))
+    }
+
+    private fun List<Expense>.toJsonArray() = JSONArray().also { array -> forEach { array.put(it.toJson().put("id", it.id)) } }
+
+    private fun dashboardForMonth(allRows: List<Expense>, month: String): DashboardData {
+        val months = allRows.map { it.date.take(7) }.filter { it.isNotBlank() }.distinct().sortedDescending()
+        val rows = allRows.filter { month.isBlank() || it.date.startsWith(month) }
+        val income = rows.filter { it.type == "Income" }.sumOf { it.amount }
+        val expenses = rows.filter { it.type == "Expense" }.sumOf { it.amount }
+        return DashboardData(rows, income, expenses, months)
     }
 }
 

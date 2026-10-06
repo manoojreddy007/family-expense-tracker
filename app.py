@@ -158,7 +158,7 @@ def api_dashboard():
     query = Transaction.query
     if month:
         query = query.filter(Transaction.date.startswith(month))
-    rows = query.order_by(Transaction.date.desc(), Transaction.id.desc()).limit(200).all()
+    rows = query.order_by(Transaction.date.desc(), Transaction.id.desc()).all()
     all_rows = Transaction.query.all()
     months = sorted({row.date[:7] for row in all_rows if row.date}, reverse=True)
     income = sum(row.amount for row in all_rows if row.type == "Income" and (not month or (row.date or "").startswith(month)))
