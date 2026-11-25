@@ -341,6 +341,7 @@ private fun TransactionCard(expense: Expense, onEdit: () -> Unit, onDelete: () -
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExpenseEditor(expense: Expense?, busy: Boolean, message: String, onCancel: () -> Unit, onSave: (Expense) -> Unit) {
     var name by remember(expense) { mutableStateOf(expense?.name ?: "") }

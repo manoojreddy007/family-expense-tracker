@@ -24,6 +24,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="LA-MA Expense Tracker"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:testOnly="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false" >
         <provider
