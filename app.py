@@ -5,6 +5,7 @@ from functools import wraps
 
 from flask import Flask, render_template, request, redirect, session, url_for, flash, Response, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import inspect, text
 
 app = Flask(__name__)
 
@@ -82,6 +83,7 @@ class Transaction(db.Model):
     date = db.Column(db.String(50))
 
     added_by = db.Column(db.String(100))
+    account = db.Column(db.String(100), nullable=False, default="Manoj")
 
 
 # -----------------------------
@@ -132,7 +134,16 @@ def transaction_json(transaction):
         "notes": transaction.notes or "",
         "date": transaction.date or "",
         "added_by": transaction.added_by or "",
+        "account": transaction.account or "Manoj",
     }
+
+
+def selected_account():
+    account = (request.values.get("account") or request.args.get("account") or session.get("account") or "Manoj").strip()
+    if account not in PEOPLE:
+        account = "Manoj"
+    session["account"] = account
+    return account
 
 
 @app.route("/api/login", methods=["POST"])
@@ -154,12 +165,13 @@ def api_logout():
 @app.route("/api/dashboard", methods=["GET"])
 @api_login_required
 def api_dashboard():
+    account = selected_account()
     month = request.args.get("month", "").strip()
-    query = Transaction.query
+    query = Transaction.query.filter_by(account=account)
     if month:
         query = query.filter(Transaction.date.startswith(month))
     rows = query.order_by(Transaction.date.desc(), Transaction.id.desc()).all()
-    all_rows = Transaction.query.all()
+    all_rows = Transaction.query.filter_by(account=account).all()
     months = sorted({row.date[:7] for row in all_rows if row.date}, reverse=True)
     income = sum(row.amount for row in all_rows if row.type == "Income" and (not month or (row.date or "").startswith(month)))
     expenses = sum(row.amount for row in all_rows if row.type == "Expense" and (not month or (row.date or "").startswith(month)))
@@ -168,6 +180,7 @@ def api_dashboard():
         "income": income,
         "expense": expenses,
         "months": months,
+        "account": account,
     })
 
 
@@ -175,7 +188,10 @@ def api_dashboard():
 @api_login_required
 def api_create_transaction():
     try:
-        values = parse_transaction_form(request.get_json(force=True))
+        body = request.get_json(force=True)
+        values = parse_transaction_form(body)
+        values["account"] = body.get("account", selected_account())
+        if values["account"] not in PEOPLE: raise ValueError("Please choose a valid account.")
     except (ValueError, TypeError) as exc:
         return jsonify({"error": str(exc) or "Invalid transaction."}), 400
     transaction = Transaction(**values)
@@ -187,7 +203,8 @@ def api_create_transaction():
 @app.route("/api/transactions/<int:transaction_id>", methods=["PUT", "DELETE"])
 @api_login_required
 def api_transaction(transaction_id):
-    transaction = db.session.get(Transaction, transaction_id)
+    account = selected_account()
+    transaction = Transaction.query.filter_by(id=transaction_id, account=account).first()
     if transaction is None:
         return jsonify({"error": "Transaction not found."}), 404
     if request.method == "DELETE":
@@ -195,7 +212,9 @@ def api_transaction(transaction_id):
         db.session.commit()
         return jsonify({"ok": True})
     try:
-        values = parse_transaction_form(request.get_json(force=True))
+        body = request.get_json(force=True)
+        values = parse_transaction_form(body)
+        values["account"] = account
     except (ValueError, TypeError) as exc:
         return jsonify({"error": str(exc) or "Invalid transaction."}), 400
     for field, value in values.items():
@@ -254,8 +273,9 @@ def month_label(month):
     return month
 
 
-def transactions_for_month(month):
-    query = Transaction.query
+def transactions_for_month(month, account=None):
+    account = account or selected_account()
+    query = Transaction.query.filter_by(account=account)
     if month:
         query = query.filter(Transaction.date.startswith(month))
     return query.order_by(Transaction.date.desc(), Transaction.id.desc()).all()
@@ -548,7 +568,7 @@ def table_commands(rows, table_top, columns, left=40, min_row_height=18, header_
     return commands
 
 
-def build_transactions_pdf(transactions, month, total_income, total_expense, savings):
+def build_transactions_pdf(transactions, month, total_income, total_expense, savings, account="Manoj"):
     page_width = 842
     page_height = 595
     left = 40
@@ -571,7 +591,7 @@ def build_transactions_pdf(transactions, month, total_income, total_expense, sav
 
     for page_number, rows in enumerate(page_rows, start=1):
         commands = [
-            text_command(left, page_height - 40, "LA-MA NEST Expense Report", 16),
+            text_command(left, page_height - 40, f"LA-MA NEST Expense Report · {account}", 16),
             text_command(left, page_height - 62, f"Month: {month_label(month)}", 10, "#5f6872"),
             text_command(page_width - 84, 28, f"Page {page_number}", 8, "#5f6872"),
         ]
@@ -648,18 +668,19 @@ def build_transactions_pdf(transactions, month, total_income, total_expense, sav
 @app.route("/", methods=["GET"])
 @login_required
 def home():
+    account = selected_account()
     current_month = datetime.now().strftime("%Y-%m")
     month = request.args.get("month", current_month)
     page = max(request.args.get("page", 1, type=int), 1)
     per_page = 10
     offset = (page - 1) * per_page
 
-    query = Transaction.query
+    query = Transaction.query.filter_by(account=account)
     if month:
         query = query.filter(Transaction.date.startswith(month))
 
     # totals use all filtered rows
-    all_transactions = transactions_for_month(month)
+    all_transactions = transactions_for_month(month, account)
 
     total_income = 0
     total_expense = 0
@@ -686,7 +707,7 @@ def home():
         page_transactions = page_transactions[:-1]
 
     months = sorted(
-        {t.date[:7] for t in Transaction.query.all() if t.date and len(t.date) >= 7},
+        {t.date[:7] for t in Transaction.query.filter_by(account=account).all() if t.date and len(t.date) >= 7},
         reverse=True
     )
     month_options = [
@@ -709,14 +730,17 @@ def home():
         categories=CATEGORIES,
         transaction_types=TRANSACTION_TYPES,
         people=PEOPLE,
+        accounts=PEOPLE,
+        selected_account=account,
     )
 
 
 @app.route("/report.pdf", methods=["GET"])
 @login_required
 def download_report():
+    account = selected_account()
     month = request.args.get("month", "")
-    transactions = transactions_for_month(month)
+    transactions = transactions_for_month(month, account)
 
     total_income = 0
     total_expense = 0
@@ -727,7 +751,7 @@ def download_report():
             total_expense += transaction.amount
 
     savings = total_income - total_expense
-    pdf = build_transactions_pdf(transactions, month, total_income, total_expense, savings)
+    pdf = build_transactions_pdf(transactions, month, total_income, total_expense, savings, account)
     filename_month = month or "all-months"
     return Response(
         pdf,
@@ -742,13 +766,16 @@ def download_report():
 @app.route("/add", methods=["GET", "POST"])
 @login_required
 def add_expense():
+    account = selected_account()
     if request.method == "POST":
         try:
-            new_transaction = Transaction(**parse_transaction_form(request.form))
+            values = parse_transaction_form(request.form)
+            values["account"] = account
+            new_transaction = Transaction(**values)
             db.session.add(new_transaction)
             db.session.commit()
             flash("Transaction added successfully!", "success")
-            return redirect("/")
+            return redirect(url_for("home", account=account))
         except ValueError as e:
             flash(f"Error adding transaction: {str(e)}", "danger")
             return redirect(url_for("add_expense"))
@@ -759,6 +786,7 @@ def add_expense():
         transaction_types=TRANSACTION_TYPES,
         people=PEOPLE,
         default_date=default_date,
+        account=account,
     )
 
 # -----------------------------
@@ -767,14 +795,15 @@ def add_expense():
 @app.route("/delete/<int:id>", methods=["POST"])
 @login_required
 def delete_transaction(id):
-    transaction = Transaction.query.get_or_404(id)
+    account = selected_account()
+    transaction = Transaction.query.filter_by(id=id, account=account).first_or_404()
     if transaction:
         db.session.delete(transaction)
         db.session.commit()
         flash("Transaction deleted.", "info")
     else:
         flash("Transaction not found.", "warning")
-    return redirect("/")
+    return redirect(url_for("home", account=account))
 
 
 # -----------------------------
@@ -783,28 +812,33 @@ def delete_transaction(id):
 @app.route("/edit/<int:id>", methods=["GET", "POST"])
 @login_required
 def edit_transaction(id):
-    transaction = Transaction.query.get_or_404(id)
+    account = selected_account()
+    transaction = Transaction.query.filter_by(id=id, account=account).first_or_404()
     if request.method == "POST":
         try:
             for field, value in parse_transaction_form(request.form).items():
                 setattr(transaction, field, value)
             db.session.commit()
             flash("Transaction updated!", "success")
-            return redirect("/")
+            return redirect(url_for("home", account=account))
         except ValueError as e:
             flash(f"Error updating transaction: {str(e)}", "danger")
-            return redirect(url_for("edit_transaction", id=id))
+            return redirect(url_for("edit_transaction", id=id, account=account))
     return render_template(
         "edit_expense.html",
         transaction=transaction,
         categories=CATEGORIES,
         transaction_types=TRANSACTION_TYPES,
         people=PEOPLE,
+        account=account,
     )
 
 # Create DB tables
 with app.app_context():
     db.create_all()
+    if "account" not in {column["name"] for column in inspect(db.engine).get_columns("transaction")} :
+        with db.engine.begin() as connection:
+            connection.execute(text("ALTER TABLE transaction ADD COLUMN account VARCHAR(100) NOT NULL DEFAULT 'Manoj'"))
 
 
 if __name__ == "__main__":

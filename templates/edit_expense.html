@@ -25,6 +25,7 @@
         {% endwith %}
 
         <form method="POST">
+            <input type="hidden" name="account" value="{{ account }}">
             <div class="mb-3">
                 <label class="form-label" for="name">Name</label>
                 <input type="text" name="name" id="name" class="form-control" required value="{{ transaction.name or '' }}">
@@ -67,7 +68,7 @@
             </div>
             <div class="d-flex gap-2">
                 <button class="btn btn-primary w-100" type="submit">Update Transaction</button>
-                <a href="/" class="btn btn-secondary w-100" role="button">Cancel</a>
+                <a href="{{ url_for('home', account=account) }}" class="btn btn-secondary w-100" role="button">Cancel</a>
             </div>
         </form>
     </div>

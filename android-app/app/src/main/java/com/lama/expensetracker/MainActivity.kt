@@ -17,6 +17,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +38,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.Instant
+import java.time.ZoneOffset
 
 private val Ink = Color(0xFF173B52)
 private val Teal = Color(0xFF167C78)
@@ -73,13 +78,14 @@ private fun TrackerApp(store: SecureConfigStore) {
     var config by remember { mutableStateOf(store.load()) }
     var data by remember { mutableStateOf<DashboardData?>(null) }
     var month by remember { mutableStateOf(currentMonth()) }
+    var account by remember { mutableStateOf(context.getSharedPreferences("account_selection", 0).getString("account", "Manoj") ?: "Manoj") }
     var editor by remember { mutableStateOf<Expense?>(null) }
     var showEditor by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var exportBytes by remember { mutableStateOf<ByteArray?>(null) }
     val scope = rememberCoroutineScope()
-    val repo = remember(config) { config?.let { ExpenseRepository(context, it) } }
+    val repo = remember(config, account) { config?.let { ExpenseRepository(context, it, account) } }
 
     val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
         val bytes = exportBytes
@@ -127,12 +133,12 @@ private fun TrackerApp(store: SecureConfigStore) {
                 }.onFailure { message = it.message ?: "Could not share the PDF." }
             } else {
                 val period = if (month.isBlank()) "all-history" else month
-                savePdf.launch("LA-MA-expenses-$period.pdf")
+                savePdf.launch("LA-MA-${account}-expenses-$period.pdf")
             }
         }.onFailure { message = it.message ?: "Could not create the PDF." }
     }
 
-    LaunchedEffect(repo, month) { if (repo != null) refresh() }
+    LaunchedEffect(repo, month) { data = null; if (repo != null) refresh() }
 
     if (config == null) {
         ConnectionScreen(onConnect = { candidate ->
@@ -157,7 +163,8 @@ private fun TrackerApp(store: SecureConfigStore) {
             })
     } else {
         DashboardScreen(
-            data = data, month = month, busy = busy, message = message,
+            data = data, month = month, account = account, busy = busy, message = message,
+            onAccount = { account = it; context.getSharedPreferences("account_selection", 0).edit().putString("account", it).apply(); month = currentMonth(); message = "" },
             onMonth = { month = it }, onAdd = { editor = null; message = ""; showEditor = true },
             onEdit = { editor = it; message = ""; showEditor = true },
             onDelete = { row ->
@@ -178,7 +185,7 @@ private fun TrackerApp(store: SecureConfigStore) {
 private fun ConnectionScreen(onConnect: (BackendConfig) -> Unit, busy: Boolean, message: String) {
     var baseUrl by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    Box(Modifier.fillMaxSize().background(Canvas).imePadding(), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).background(Canvas).imePadding(), contentAlignment = Alignment.Center) {
         Card(Modifier.fillMaxWidth().padding(22.dp), shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Image(painterResource(R.mipmap.ic_launcher), contentDescription = "LA-MA Expense Tracker logo", modifier = Modifier.size(92.dp).clip(RoundedCornerShape(22.dp)))
@@ -200,15 +207,17 @@ private fun ConnectionScreen(onConnect: (BackendConfig) -> Unit, busy: Boolean, 
 
 @Composable
 private fun DashboardScreen(
-    data: DashboardData?, month: String, busy: Boolean, message: String,
+    data: DashboardData?, month: String, account: String, busy: Boolean, message: String,
+    onAccount: (String) -> Unit,
     onMonth: (String) -> Unit, onAdd: () -> Unit, onEdit: (Expense) -> Unit,
     onDelete: (Expense) -> Unit, onRefresh: () -> Unit,
     onSavePdf: () -> Unit, onSharePdf: () -> Unit
 ) {
     var monthsExpanded by remember { mutableStateOf(false) }
+    var accountsExpanded by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<Expense?>(null) }
-    Column(Modifier.fillMaxSize().background(Canvas).padding(horizontal = 18.dp)) {
+    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).background(Canvas).padding(horizontal = 18.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Image(painterResource(R.mipmap.ic_launcher), contentDescription = "LA-MA logo", modifier = Modifier.size(46.dp).clip(RoundedCornerShape(13.dp)))
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
@@ -228,6 +237,12 @@ private fun DashboardScreen(
         }
 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Box {
+                FilledTonalButton(onClick = { accountsExpanded = true }, shape = RoundedCornerShape(12.dp)) { Text("$account  ▾") }
+                DropdownMenu(expanded = accountsExpanded, onDismissRequest = { accountsExpanded = false }) {
+                    people.forEach { person -> DropdownMenuItem(text = { Text(person) }, onClick = { accountsExpanded = false; onAccount(person) }) }
+                }
+            }
             Box {
                 FilledTonalButton(onClick = { monthsExpanded = true }, shape = RoundedCornerShape(12.dp)) {
                     Text(if (month.isBlank()) "All history  ▾" else "${monthLabel(month)}  ▾")
@@ -338,8 +353,12 @@ private fun ExpenseEditor(expense: Expense?, busy: Boolean, message: String, onC
     var formError by remember { mutableStateOf("") }
     var categoryExpanded by remember { mutableStateOf(false) }
     var typeExpanded by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = runCatching { LocalDate.parse(date).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() }.getOrNull()
+    )
 
-    Column(Modifier.fillMaxSize().background(Canvas).imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).background(Canvas).imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onCancel, contentPadding = PaddingValues(0.dp)) { Text("←  Back to transactions") }
         Text(if (expense == null) "New transaction" else "Edit transaction", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text("Keep the details clear so your monthly reports stay useful.", style = MaterialTheme.typography.bodyMedium, color = Muted)
@@ -349,7 +368,15 @@ private fun ExpenseEditor(expense: Expense?, busy: Boolean, message: String, onC
                 OutlinedTextField(amount, { amount = it }, label = { Text("Amount (Rs)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp))
                 ChoiceField("Category", category, expenseCategories, categoryExpanded, { categoryExpanded = it }, { category = it })
                 ChoiceField("Type", type, transactionTypes, typeExpanded, { typeExpanded = it }, { type = it })
-                OutlinedTextField(date, { date = it }, label = { Text("Date") }, supportingText = { Text("Use YYYY-MM-DD") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(13.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(date, { date = it }, label = { Text("Date") }, supportingText = { Text("Type YYYY-MM-DD or choose from calendar") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(13.dp))
+                    OutlinedButton(onClick = {
+                        datePickerState.selectedDateMillis = runCatching {
+                            LocalDate.parse(date).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+                        }.getOrNull()
+                        showDatePicker = true
+                    }, shape = RoundedCornerShape(13.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp)) { Text("Calendar") }
+                }
                 OutlinedTextField(notes, { notes = it.take(200) }, label = { Text("Notes") }, placeholder = { Text("Optional · up to 200 characters") }, modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 4, shape = RoundedCornerShape(13.dp))
             }
         }
@@ -366,6 +393,20 @@ private fun ExpenseEditor(expense: Expense?, busy: Boolean, message: String, onC
             }
         }
         Spacer(Modifier.height(12.dp))
+    }
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        date = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().toString()
+                    }
+                    showDatePicker = false
+                }) { Text("Select") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
+        ) { DatePicker(state = datePickerState) }
     }
 }
 

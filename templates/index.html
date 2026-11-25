@@ -30,7 +30,13 @@
         {% endwith %}
 
         <section class="card shadow p-4 mb-5">
-            <h2 class="mb-4 text-center">Welcome Manoj & Lalitha</h2>
+            <h2 class="mb-4 text-center">{{ selected_account }}'s Account</h2>
+            <form method="get" class="mx-auto mb-4" style="max-width: 280px">
+                <label class="form-label" for="account">Account</label>
+                <select name="account" id="account" class="form-select" onchange="this.form.submit()">
+                    {% for account in accounts %}<option value="{{ account }}" {% if selected_account == account %}selected{% endif %}>{{ account }}</option>{% endfor %}
+                </select>
+            </form>
 
             <div class="row text-center">
                 <div class="col-md-4 mb-3">
@@ -54,7 +60,7 @@
             </div>
 
             <div class="text-center mt-4">
-                <a href="/add" class="btn btn-primary">Add Transaction</a>
+                <a href="{{ url_for('add_expense', account=selected_account) }}" class="btn btn-primary">Add Transaction</a>
             </div>
         </section>
 
@@ -63,6 +69,7 @@
                 <h3 class="mb-0">Recent Transactions</h3>
                 <div class="d-flex gap-2">
                     <form method="get" class="month-filter">
+                        <input type="hidden" name="account" value="{{ selected_account }}">
                         <select name="month" class="form-select" onchange="this.form.submit()">
                             <option value="">All Months</option>
                             {% for value, label in month_options %}
@@ -70,7 +77,7 @@
                             {% endfor %}
                         </select>
                     </form>
-                    <a href="{{ url_for('download_report', month=selected_month) }}" class="btn btn-secondary" role="button">
+                    <a href="{{ url_for('download_report', month=selected_month, account=selected_account) }}" class="btn btn-secondary" role="button">
                         Download PDF
                     </a>
                 </div>
@@ -80,11 +87,11 @@
   <ul class="pagination justify-content-end">
     {% if page > 1 %}
       <li class="page-item">
-        <a class="page-link" href="{{ url_for('home', month=selected_month, page=page-1) }}">Previous</a>
+        <a class="page-link" href="{{ url_for('home', account=selected_account, month=selected_month, page=page-1) }}">Previous</a>
       </li>
     {% endif %} {% if has_next %}
       <li class="page-item">
-        <a class="page-link" href="{{ url_for('home', month=selected_month, page=page+1) }}">Next</a>
+        <a class="page-link" href="{{ url_for('home', account=selected_account, month=selected_month, page=page+1) }}">Next</a>
       </li>
     {% endif %}
   </ul>
@@ -116,8 +123,8 @@
                             <td class="notes-cell">{{ transaction.notes or '' }}</td>
                             <td>
                                 <div class="d-flex gap-2">
-                                    <a href="/edit/{{ transaction.id }}" class="btn btn-warning btn-sm">Edit</a>
-                                    <form method="POST" action="/delete/{{ transaction.id }}" onsubmit="return confirm('Delete this transaction?');">
+                                    <a href="{{ url_for('edit_transaction', id=transaction.id, account=selected_account) }}" class="btn btn-warning btn-sm">Edit</a>
+                                    <form method="POST" action="{{ url_for('delete_transaction', id=transaction.id, account=selected_account) }}" onsubmit="return confirm('Delete this transaction?');">
                                         <button class="btn btn-danger btn-sm" type="submit">Delete</button>
                                     </form>
                                 </div>

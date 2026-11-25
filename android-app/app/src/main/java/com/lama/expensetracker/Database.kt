@@ -73,10 +73,10 @@ class SecureConfigStore(context: Context) {
     fun clear() { prefs.edit().clear().apply() }
 }
 
-class ExpenseRepository(context: Context, private val config: BackendConfig) {
+class ExpenseRepository(context: Context, private val config: BackendConfig, private val account: String = "Manoj") {
     @Volatile private var cookie: String? = null
     private val cache = context.applicationContext.getSharedPreferences(
-        "expense_cache_${config.baseUrl.hashCode()}", Context.MODE_PRIVATE
+        "expense_cache_${config.baseUrl.hashCode()}_${account}", Context.MODE_PRIVATE
     )
     @Volatile var statusMessage: String = ""
         private set
@@ -133,7 +133,7 @@ class ExpenseRepository(context: Context, private val config: BackendConfig) {
                 return@withContext cached ?: DashboardData(emptyList(), 0.0, 0.0, emptyList())
             }
             // Fetch the complete history once so every month remains available offline.
-            val json = request("/api/dashboard")
+            val json = request("/api/dashboard?account=$account")
             val rows = json.getJSONArray("rows").toExpenses()
             cache.edit().putString("snapshot", JSONObject().put("rows", rows.toJsonArray()).toString()).apply()
             statusMessage = ""
@@ -206,8 +206,8 @@ class ExpenseRepository(context: Context, private val config: BackendConfig) {
                         if (later.optInt("id") == id) later.put("id", newId)
                     }
                 }
-                "update" -> request("/api/transactions/$id", "PUT", operation.getJSONObject("body"))
-                "delete" -> request("/api/transactions/$id", "DELETE")
+                "update" -> request("/api/transactions/$id?account=$account", "PUT", operation.getJSONObject("body"))
+                "delete" -> request("/api/transactions/$id?account=$account", "DELETE")
             }
             val remaining = JSONArray()
             for (i in 1 until operations.length()) remaining.put(operations.get(i))
@@ -218,7 +218,7 @@ class ExpenseRepository(context: Context, private val config: BackendConfig) {
 
     private fun Expense.toJson() = JSONObject().put("name", name).put("amount", amount)
         .put("category", category).put("type", type).put("notes", notes)
-        .put("date", date).put("added_by", addedBy)
+        .put("date", date).put("added_by", addedBy).put("account", account)
 
     private fun JSONArray.toExpenses() = (0 until length()).map { index ->
         val row = getJSONObject(index)
